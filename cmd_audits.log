@@ -1,0 +1,30 @@
+Client 127.0.0.1 attempted connection with username: username, password: password
+Command b'ls'executed by 127.0.0.1
+Command b'pwd'executed by 127.0.0.1
+Command b'whom'executed by 127.0.0.1
+Command b'whoa\x7fm\x7f\x7f\x7f\x7f\x7f\x7f\x7f'executed by 127.0.0.1
+Command b'whomai'executed by 127.0.0.1
+Command b'\x18\x03exit'executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b''executed by 127.0.0.1
+Command b'hi'executed by 127.0.0.1
+Command b'who am i'executed by 127.0.0.1
+Command b'cat'executed by 127.0.0.1
+Command b'\x1b\x1b\x03\x17\x1b\x1b\x1bexit'executed by 127.0.0.1
+Command b'clear'executed by 127.0.0.1
+Client 127.0.0.1 attempted connection with username: username, password: password
+Command b'-p'executed by 127.0.0.1
+Command b'-h'executed by 127.0.0.1
+Command b'pwd'executed by 127.0.0.1
+Command b'p'executed by 127.0.0.1
+Command b'ls'executed by 127.0.0.1
