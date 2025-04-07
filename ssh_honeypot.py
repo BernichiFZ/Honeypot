@@ -1,4 +1,3 @@
-# Import library dependencies.
 import logging
 from logging.handlers import RotatingFileHandler
 import paramiko
@@ -6,43 +5,42 @@ import threading
 import socket
 import time
 from pathlib import Path
-
-# Constants.
-SSH_BANNER = "SSH-2.0-MySSHServer_1.0 hello mother fucker !! "
-
-# Constants.
-# Get base directory of where user is running honeypy from.
-base_dir = base_dir = Path(__file__).parent.parent
-# Source creds_audits.log & cmd_audits.log file path.
-server_key = base_dir / 'Honeypot'/ 'server.key'
-
-creds_audits_log_local_file_path = base_dir / 'Honeypot' / 'creds_audits.log'
-cmd_audits_log_local_file_path = base_dir / 'Honeypot' / 'cmd_audits.log'
-
-# SSH Server Host Key.
-host_key = paramiko.RSAKey(filename=server_key)
-
-# Logging Format.
-logging_format = logging.Formatter('%(message)s')
-
-# Funnel (catch all) Logger.
-funnel_logger = logging.getLogger('FunnelLogger')
-funnel_logger.setLevel(logging.INFO)
-funnel_handler = RotatingFileHandler(cmd_audits_log_local_file_path, maxBytes=2000, backupCount=5)
-funnel_handler.setFormatter(logging_format)
-funnel_logger.addHandler(funnel_handler)
-
-# Credentials Logger. Captures IP Address, Username, Password.
-creds_logger = logging.getLogger('CredsLogger')
-creds_logger.setLevel(logging.INFO)
-creds_handler = RotatingFileHandler(creds_audits_log_local_file_path, maxBytes=2000, backupCount=5)
-creds_handler.setFormatter(logging_format)
-creds_logger.addHandler(creds_handler)
+from datetime import datetime
 
 
-# SSH Server Class. This establishes the options for the SSH server.
-class Server(paramiko.ServerInterface):
+# Constants for configuration
+class Config:
+    SSH_BANNER = "SSH-2.0-MySSHServer_1.0 hello mother fucker !! "
+    BASE_DIR = Path(__file__).parent.parent
+    SERVER_KEY = BASE_DIR / 'Honeypot' / 'server.key'
+    CREDS_LOG_FILE = BASE_DIR / 'Honeypot' / 'creds_audits.log'
+    CMD_LOG_FILE = BASE_DIR / 'Honeypot' / 'cmd_audits.log'
+    SSH_PORT = 2224
+    MAX_CONN = 100
+    USERNAME = 'username'
+    PASSWORD = 'password'
+    TARPIT = False
 
+
+
+# Initialize logging
+def setup_logger(log_file, max_bytes=2000, backup_count=5):
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    handler = RotatingFileHandler(log_file, maxBytes=max_bytes, backupCount=backup_count)
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    return logger
+
+
+# Setup main loggers
+funnel_logger = setup_logger(Config.CMD_LOG_FILE)
+creds_logger = setup_logger(Config.CREDS_LOG_FILE)
+
+
+# SSH Server Class
+class SSHServer(paramiko.ServerInterface):
     def __init__(self, client_ip, input_username=None, input_password=None):
         self.event = threading.Event()
         self.client_ip = client_ip
@@ -57,16 +55,14 @@ class Server(paramiko.ServerInterface):
         return "password"
 
     def check_auth_password(self, username, password):
-        funnel_logger.info(
-            f'Client {self.client_ip} attempted connection with ' + f'username: {username}, ' + f'password: {password}')
+        funnel_logger.info(f'Client {self.client_ip} attempted login with username: {username}, password: {password}')
         creds_logger.info(f'{self.client_ip}, {username}, {password}')
-        if self.input_username is not None and self.input_password is not None:
+        if self.input_username and self.input_password:
             if username == self.input_username and password == self.input_password:
                 return paramiko.AUTH_SUCCESSFUL
             else:
                 return paramiko.AUTH_FAILED
-        else:
-            return paramiko.AUTH_SUCCESSFUL
+        return paramiko.AUTH_SUCCESSFUL
 
     def check_channel_shell_request(self, channel):
         self.event.set()
@@ -76,13 +72,27 @@ class Server(paramiko.ServerInterface):
         return True
 
     def check_channel_exec_request(self, channel, command):
-        command = str(command)
         return True
 
 
+# Emulated shell to simulate commands
 def emulated_shell(channel, client_ip):
     channel.send(b"BERNICHI_Emulated_Shell$ ")
     command = b""
+
+    # Fake file system and directory structure
+    file_system = {
+        'jumpbox1.conf': 'Go to deeboodah.com\r\n',
+        'readme.txt': 'This is a test file with some random content.\r\n',
+    }
+
+    directories = {
+        '/': ['jumpbox1.conf', 'readme.txt'],
+        '/home': [],
+    }
+
+    current_dir = '/'
+
     while True:
         char = channel.recv(1)
         channel.send(char)
@@ -90,105 +100,145 @@ def emulated_shell(channel, client_ip):
             channel.close()
 
         command += char
-        # Emulate common shell commands.
         if char == b"\r":
             if command.strip() == b'exit':
-                response = b"\n Goodbye!\n"
+                channel.send(b"\n Goodbye!\n")
                 channel.close()
             elif command.strip() == b'pwd':
-                response = b"\n" + b"\\usr\\local" + b"\r\n"
-                funnel_logger.info(f'Command {command.strip()}' + "executed by " f'{client_ip}')
+                # Print the current working directory
+                channel.send(f"\n{current_dir}\r\n".encode())
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
             elif command.strip() == b'whoami':
-                response = b"\n" + b"corpuser1" + b"\r\n"
-                funnel_logger.info(f'Command {command.strip()}' + "executed by " f'{client_ip}')
+                channel.send(b"\ncorporate-jumpbox-user\r\n")
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
             elif command.strip() == b'ls':
-                response = b"\n" + b"jumpbox1.conf" + b"\r\n"
-                funnel_logger.info(f'Command {command.strip()}' + "executed by " f'{client_ip}')
+                # List files in the current directory
+                files = directories.get(current_dir, [])
+                file_list = '\r\n'.join(files) if files else 'No files found'
+                channel.send(f"\n{file_list}\r\n".encode())
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
             elif command.strip() == b'cat jumpbox1.conf':
-                response = b"\n" + b"Go to deeboodah.com" + b"\r\n"
-                funnel_logger.info(f'Command {command.strip()}' + "executed by " f'{client_ip}')
+                channel.send(file_system.get('jumpbox1.conf', b'File not found\r\n'))
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
+            elif command.strip() == b'cat readme.txt':
+                channel.send(file_system.get('readme.txt', b'File not found\r\n'))
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
+            elif command.strip() == b'date':
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                channel.send(f"\n{current_time}\r\n".encode())
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
+            elif command.strip() == b'-h' or command.strip() == b'help':
+                help_text = (
+                    "\nAvailable commands:\n"
+                    "  exit     - Close the connection.\n"
+                    "  pwd      - Show the current directory.\n"
+                    "  whoami   - Show the current user.\n"
+                    "  ls       - List directory contents.\n"
+                    "  cat      - Show the contents of a file.\n"
+                    "  date     - Show current date and time.\n"
+                    "  mkdir    - Create a new directory.\n"
+                    "  rm       - Remove a file.\n"
+                    "  touch    - Create a new file.\n"
+                    "  echo     - Echo text to the terminal.\n"
+                    "  help     - Show this help message.\n"
+                )
+                channel.send(help_text.encode())
+                funnel_logger.info(f'Help requested by {client_ip}')
+            elif command.strip().startswith(b'mkdir'):
+                dir_name = command.strip().split(b' ')[1]
+                if dir_name not in directories:
+                    directories[dir_name.decode()] = []
+                    channel.send(f"\nDirectory '{dir_name.decode()}' created\r\n".encode())
+                else:
+                    channel.send(f"\nDirectory '{dir_name.decode()}' already exists\r\n".encode())
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
+            elif command.strip().startswith(b'rm'):
+                file_name = command.strip().split(b' ')[1]
+                if file_name in file_system:
+                    del file_system[file_name]
+                    channel.send(f"\nFile '{file_name.decode()}' removed\r\n".encode())
+                else:
+                    channel.send(f"\nFile '{file_name.decode()}' not found\r\n".encode())
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
+            elif command.strip().startswith(b'touch'):
+                file_name = command.strip().split(b' ')[1]
+                if file_name not in file_system:
+                    file_system[file_name] = ''
+                    directories[current_dir].append(file_name.decode())
+                    channel.send(f"\nFile '{file_name.decode()}' created\r\n".encode())
+                else:
+                    channel.send(f"\nFile '{file_name.decode()}' already exists\r\n".encode())
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
+            elif command.strip().startswith(b'echo'):
+                text = b' '.join(command.strip().split(b' ')[1:])
+                channel.send(f"\n{text.decode()}\r\n".encode())
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
             else:
-                response = b"\n" + bytes(command.strip()) + b"\r\n"
-                funnel_logger.info(f'Command {command.strip()}' + "executed by " f'{client_ip}')
-            channel.send(response)
+                channel.send(f"\n{command.strip().decode()} \r\n".encode())
+                funnel_logger.info(f'Command {command.strip()} executed by {client_ip}')
             channel.send(b"corporate-jumpbox2$ ")
             command = b""
 
 
-def client_handle(client, addr, username, password, tarpit=False):
+# Handle client connections
+def handle_client(client, addr, username, password, tarpit=False):
+    print(f"Connection received from {addr}")
     client_ip = addr[0]
     print(f"{client_ip} connected to server.")
     try:
-
-        # Initlizes a Transport object using the socket connection from client.
         transport = paramiko.Transport(client)
-        transport.local_version = SSH_BANNER
-
-        # Creates an instance of the SSH server, adds the host key to prove its identity, starts SSH server.
-        server = Server(client_ip=client_ip, input_username=username, input_password=password)
-        transport.add_server_key(host_key)
+        transport.local_version = Config.SSH_BANNER
+        server = SSHServer(client_ip=client_ip, input_username=username, input_password=password)
+        transport.add_server_key(paramiko.RSAKey(filename=Config.SERVER_KEY))
         transport.start_server(server=server)
 
-        # Establishes an en crypted tunnel for bidirectional communication between the client and server.
         channel = transport.accept(100)
-
         if channel is None:
             print("No channel was opened.")
+            return
 
-        standard_banner = "Welcome to my game 22.04 LTS (BERNICHI HIHI)!\r\n\r\n"
+        banner = "Welcome to my game 22.04 LTS (BERNICHI HIHI)!\r\n\r\n"
+        if tarpit:
+            endless_banner = banner * 100
+            for char in endless_banner:
+                channel.send(char)
+                time.sleep(8)
+        else:
+            channel.send(banner)
 
-        try:
-            # Endless Banner: If tarpit option is passed, then send 'endless' ssh banner.
-            if tarpit:
-                endless_banner = standard_banner * 100
-                for char in endless_banner:
-                    channel.send(char)
-                    time.sleep(8)
-            # Standard Banner: Send generic welcome banner to impersonate server.
-            else:
-                channel.send(standard_banner)
-            # Send channel connection to emulated shell for interpretation.
-            emulated_shell(channel, client_ip=client_ip)
+        emulated_shell(channel, client_ip)
 
-        except Exception as error:
-            print(error)
-    # Generic catch all exception error code.
-    except Exception as error:
-        print(error)
-        print("!!! Exception !!!")
 
-    # Once session has completed, close the transport connection.
+    except Exception as e:
+        print(f"Exception occurred: {e}")
+        import traceback
+        traceback.print_exc()
+
     finally:
         try:
             transport.close()
         except Exception:
             pass
-
         client.close()
 
 
-def honeypot(address, port, username, password, tarpit=False):
-    # Open a new socket using TCP, bind to port.
-    socks = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    socks.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    socks.bind((address, port))
-
-    # Can handle 100 concurrent connections.
-    socks.listen(100)
+# Start honeypot server
+def start_honeypot(address, port, username, password, tarpit=False):
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind((address, port))
+    server_socket.listen(Config.MAX_CONN)
     print(f"SSH server is listening on port {port}.")
 
     while True:
         try:
-            # Accept connection from client and address.
-            client, addr = socks.accept()
-            # Start a new thread to handle the client connection.
-            ssh_honeypot_thread = threading.Thread(target=client_handle,
-                                                   args=(client, addr, username, password, tarpit))
-            ssh_honeypot_thread.start()
-
+            client, addr = server_socket.accept()
+            threading.Thread(target=handle_client, args=(client, addr, username, password, tarpit)).start()
         except Exception as error:
-            # Generic catch all exception error code.
-            print("!!! Exception - Could not open new client connection !!!")
-            print(error)
+            print(f"Could not open new client connection: {error}")
 
-honeypot('127.0.0.1', 2223 , 'username', 'password')
+
+# Run the honeypot
+if __name__ == "__main__":
+    print("Starting honeypot on 127.0.0.1:2224...")
+    start_honeypot('127.0.0.1', Config.SSH_PORT, Config.USERNAME, Config.PASSWORD, tarpit=Config.TARPIT)
